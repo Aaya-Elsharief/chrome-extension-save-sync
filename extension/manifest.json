@@ -1,0 +1,9 @@
+{
+  "name": "save note",
+  "description": "Save any thing you see on the web as note",
+  "version": "1.0",
+  "manifest_version": 3,
+  "action": {
+    "default_popup": "index.html"
+  }
+}
