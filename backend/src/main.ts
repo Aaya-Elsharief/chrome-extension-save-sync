@@ -1,8 +1,73 @@
-import { NestFactory } from '@nestjs/core';
+import { HttpAdapterHost, NestFactory } from '@nestjs/core';
+import { ValidationError, ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { EnvironmentVariables } from 'env/env.configuration';
+import { AllExceptionsFilter } from './utils/exception-filter/all-exceptions.filter';
+import { ErrorCodes } from './utils/constants/error-codes';
+import { ValidationErrorCodes } from './utils/constants/validation-error-codes';
+import { InvalidParamsException } from './utils/exception/invalid-params-exception';
+import { useContainer } from 'class-validator';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  await app.listen(process.env.PORT ?? 3000);
+  app.useGlobalFilters(new AllExceptionsFilter(app.get(HttpAdapterHost)));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      stopAtFirstError: true,
+      exceptionFactory: (errors: ValidationError[]) => {
+        return ValidationErrorsFormat(errors);
+      },
+    }),
+  );
+  useContainer(app.select(AppModule), { fallbackOnErrors: true });
+
+  await app.listen(EnvironmentVariables().port);
 }
 bootstrap();
+function ValidationErrorsFormat(
+  validationErrors: ValidationError[],
+): InvalidParamsException {
+  const myValidationErrors: {
+    [key: string]: Array<{ en: string; ar: string }>;
+  } = {};
+
+  // Recursion using inner function to handle nested objects
+  function formatValidationErrors(
+    validationErrors: ValidationError[],
+    property?: string,
+  ) {
+    for (const validationError of validationErrors) {
+      if (validationError.children && validationError.children.length > 0) {
+        formatValidationErrors(
+          validationError.children,
+          validationError.property,
+        );
+      } else {
+        const key =
+          property && property.length > 0
+            ? property + '.' + validationError.property
+            : validationError.property;
+        myValidationErrors[key] = [];
+        if (validationError.constraints) {
+          const constraints = Object.keys(validationError.constraints);
+          for (const constraint of constraints) {
+            const errorCode =
+              ValidationErrorCodes[
+                constraint as keyof typeof ValidationErrorCodes
+              ];
+            if (errorCode) {
+              myValidationErrors[key].push(errorCode);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  formatValidationErrors(validationErrors);
+
+  // return exception
+  const invalidParams = ErrorCodes.INVALID_PARAMS;
+  invalidParams.fields = myValidationErrors;
+  return new InvalidParamsException(invalidParams);
+}
